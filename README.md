@@ -1,3 +1,29 @@
+## Modifications
+Modify
+1. `unitree_go2_env.py`
+add class `UnitreeGo2PushCrateEnv` 
+2. `__init__.py`
+dial_mpc/envs/__init__.py
+3. `__init__.py`
+dial_mpc/examples/__init__.py
+
+
+Add
+1. `mjx_scene_push_crate.xml `
+2. `mjx_go2_crate_force_collision.xml`
+3. `unitree_go2_crate_push.yaml` 
+
+## Command
+List available examples:
+```bash
+dial-mpc --list-examples
+```
+Run an example:
+```bash
+dial-mpc --example unitree_go2_crate_push
+```
+
+
 # DIAL-MPC: Diffusion-Inspired Annealing For Legged MPC
 
 <div align="center">
