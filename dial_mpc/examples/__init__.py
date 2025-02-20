@@ -5,6 +5,8 @@ examples = [
     "unitree_go2_trot",
     "unitree_go2_seq_jump",
     "unitree_go2_crate_climb",
+    "unitree_go2_stair",
+    "unitree_go2_crate_push"
 ]
 
 deploy_examples = [
