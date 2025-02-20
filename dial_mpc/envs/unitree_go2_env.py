@@ -65,18 +65,10 @@ class UnitreeGo2Env(BaseEnv):
 
         self.joint_range = jnp.array(
             [
-                [-0.5, 0.5],
-                [0.4, 1.4],
-                [-2.3, -0.85],
-                [-0.5, 0.5],
-                [0.4, 1.4],
-                [-2.3, -0.85],
-                [-0.5, 0.5],
-                [0.4, 1.4],
-                [-2.3, -1.3],
-                [-0.5, 0.5],
-                [0.4, 1.4],
-                [-2.3, -1.3],
+                [-0.5, 0.5],[0.4, 1.4],[-2.3, -0.85],
+                [-0.5, 0.5],[0.4, 1.4],[-2.3, -0.85],
+                [-0.5, 0.5],[0.4, 1.4],[-2.3, -1.3],
+                [-0.5, 0.5],[0.4, 1.4],[-2.3, -1.3],
             ]
         )
         feet_site = [
@@ -329,6 +321,7 @@ class UnitreeGo2SeqJumpEnv(UnitreeGo2Env):
         self, config: UnitreeGo2SeqJumpEnvConfig = UnitreeGo2SeqJumpEnvConfig()
     ):
         super().__init__(config)
+        # if not defined in config, call generate_jumping_sequence
         if config.contact_targets is None or config.contact_target_radius is None:
             (
                 self._contact_targets,
@@ -343,43 +336,41 @@ class UnitreeGo2SeqJumpEnv(UnitreeGo2Env):
             self._contact_target_radius = config.contact_target_radius
             self._pose_target_sequence = config.pose_target_sequence
             self._yaw_target_sequence = config.yaw_target_sequence
+
+        # range of motion of the joint
         self.joint_range = jnp.array(
             [
-                [-0.5, 0.5],
-                [0.4, 2.0],
-                [-2.3, -1.3],
-                [-0.5, 0.5],
-                [0.4, 2.0],
-                [-2.3, -1.3],
-                [-0.5, 0.5],
-                [0.4, 1.4],
-                [-2.3, -1.3],
-                [-0.5, 0.5],
-                [0.4, 1.4],
-                [-2.3, -1.3],
+                [-0.5, 0.5], [0.4, 2.0], [-2.3, -1.3],
+                [-0.5, 0.5], [0.4, 2.0], [-2.3, -1.3],
+                [-0.5, 0.5], [0.4, 1.4], [-2.3, -1.3],
+                [-0.5, 0.5], [0.4, 1.4], [-2.3, -1.3],
             ]
         )
 
     def reset(self, rng: jax.Array) -> State:
+        # Update random number generator
         rng, key = jax.random.split(rng)
+
+        # Initialize the robot's physical state
         pipeline_state = self.pipeline_init(self._init_q, jnp.zeros(self._nv))
 
-        state_info = {
-            "rng": rng,
-            "pos_tar": jnp.array([0.0, 0.0, 0.27]),
-            "vel_tar": jnp.array([0.0, 0.0, 0.0]),
-            "ang_vel_tar": jnp.array([0.0, 0.0, 0.0]),
-            "yaw_tar": 0.0,
-            "step": 0,
-            "z_feet": jnp.zeros(4),
-            "z_feet_tar": jnp.zeros(4),
-            "randomize_target": self._config.randomize_tasks,
-            "last_contact": jnp.zeros(4, dtype=jnp.bool),
-            "feet_air_time": jnp.zeros(4),
-            "last_ctrl": jnp.zeros(12),
-        }
 
-        state_info["contact_stage"] = 0
+        state_info = {"rng": rng,
+                      "pos_tar": jnp.array([0.0, 0.0, 0.27]),
+                      "vel_tar": jnp.array([0.0, 0.0, 0.0]),
+                      "ang_vel_tar": jnp.array([0.0, 0.0, 0.0]),
+                      "yaw_tar": 0.0,
+                      "step": 0,
+                      "z_feet": jnp.zeros(4),
+                      "z_feet_tar": jnp.zeros(4),
+                      "randomize_target": self._config.randomize_tasks,
+                      "last_contact": jnp.zeros(4, dtype=jnp.bool),
+                      "feet_air_time": jnp.zeros(4),
+                      "last_ctrl": jnp.zeros(12),
+                      "contact_stage": 0}
+
+
+        # Determines whether to enable random tasks
         if not self._config.randomize_tasks:
             state_info["contact_targets"] = self._contact_targets
             state_info["contact_target_radius"] = self._contact_target_radius
@@ -393,8 +384,11 @@ class UnitreeGo2SeqJumpEnv(UnitreeGo2Env):
                 state_info["yaw_target_sequence"],
             ) = self.sample_command(rng)
 
+
         obs = self._get_obs(pipeline_state, state_info)
+
         reward, done = jnp.zeros(2)
+
         metrics = {}
         state = State(pipeline_state, obs, reward, done, metrics, state_info)
 
@@ -430,20 +424,24 @@ class UnitreeGo2SeqJumpEnv(UnitreeGo2Env):
             duty_ratio, cadence, amplitude, phases, state.info["step"] * self.dt
         )
         reward_gaits = -jnp.sum(((z_feet_tar - z_feet) / 0.05) ** 2)
+
         # position reward
         pose_target_sequence = state.info["pose_target_sequence"]
         pos_tar = pose_target_sequence[state.info["contact_stage"]]
         pos = x.pos[self._torso_idx - 1]
         reward_pos = -jnp.sum((pos - pos_tar) ** 2)
+
         # stay upright reward
         vec_tar = jnp.array([0.0, 0.0, 1.0])
         vec = math.rotate(vec_tar, x.rot[0])
         reward_upright = -jnp.sum(jnp.square(vec - vec_tar))
+
         # yaw orientation reward
         yaw_target_sequence = state.info["yaw_target_sequence"]
         yaw_tar = yaw_target_sequence[state.info["contact_stage"]]
         yaw = math.quat_to_euler(x.rot[self._torso_idx - 1])[2]
         reward_yaw = -jnp.square(yaw - yaw_tar)
+
         # stay to norminal pose reward
         # reward_pose = -jnp.sum(jnp.square(joint_targets - self._default_pose))
 
@@ -453,11 +451,15 @@ class UnitreeGo2SeqJumpEnv(UnitreeGo2Env):
         reward_1 = lambda x: 1.0 * x
         reward_0 = lambda x: 0.0
         contact_targets = state.info["contact_targets"]
+        jax.debug.print("contact_targets: {}", contact_targets)
         contact_target_radius = state.info["contact_target_radius"]
         for i in range(4):
             for j in range(len(contact_targets)):
                 contact_dist = pipeline_state.contact.dist[i]
                 contact_pt = pipeline_state.contact.pos[i]
+                # jax.debug.print("contact_dist: {}", contact_dist)
+                # jax.debug.print("contact_pt: {}", contact_pt)
+
                 cond = (
                     jnp.sum((contact_pt[:2] - contact_targets[j, i, :2]) ** 2)
                     <= contact_target_radius[j, i] ** 2
@@ -525,21 +527,32 @@ class UnitreeGo2SeqJumpEnv(UnitreeGo2Env):
         pipeline_state: base.State,
         state_info: dict[str, Any],
     ) -> jax.Array:
+
+
         x, xd = pipeline_state.x, pipeline_state.xd
+
+
         vb = global_to_body_velocity(
             xd.vel[self._torso_idx - 1], x.rot[self._torso_idx - 1]
         )
         ab = global_to_body_velocity(
             xd.ang[self._torso_idx - 1] * jnp.pi / 180.0, x.rot[self._torso_idx - 1]
         )
+
+
         quat = pipeline_state.qpos[3:7]
         rpy = math.quat_to_euler(quat)
+
+
         pose_target = state_info["pose_target_sequence"][state_info["contact_stage"]]
         yaw_target = state_info["yaw_target_sequence"][state_info["contact_stage"]]
+
 
         diff_position = x.pos[self._torso_idx - 1] - pose_target
         diff_yaw = rpy[2] - yaw_target
         diff_yaw = jnp.arctan2(jnp.sin(diff_yaw), jnp.cos(diff_yaw)).reshape(1)
+
+
         obs = jnp.concatenate(
             [
                 state_info["vel_tar"],
@@ -559,15 +572,23 @@ class UnitreeGo2SeqJumpEnv(UnitreeGo2Env):
     def generate_jumping_sequence(
         com_pos: Sequence, com_heading: Sequence, foot_place_radius: float
     ):
+
         n_steps = com_pos.shape[0]
+
         contact_targets = []
+
         contact_target_radius = jnp.full((n_steps, 4), foot_place_radius)
+
         pose_target_sequence = jnp.array(com_pos)
+
         yaw_target_sequence = jnp.array(com_heading)
+
         assert n_steps == len(com_heading)
 
         for i in range(n_steps):
+
             contact_target = jnp.repeat(jnp.array([com_pos[i]]), 4, axis=0)
+
             offsets = jnp.array(
                 [
                     [0.2, -0.135, 0.0],  # FR
@@ -576,11 +597,15 @@ class UnitreeGo2SeqJumpEnv(UnitreeGo2Env):
                     [-0.2, 0.135, 0.0],  # RL
                 ]
             )
+
             R = math.quat_to_3x3(
                 math.euler_to_quat(jnp.array([0.0, 0.0, com_heading[i] * 180 / jnp.pi]))
             )
+
             offsets = jnp.dot(offsets, R.T)
+
             contact_target = contact_target + offsets
+
             contact_targets.append(contact_target)
         contact_targets = jnp.array(contact_targets)
 
@@ -655,18 +680,10 @@ class UnitreeGo2CrateEnv(UnitreeGo2Env):
         super().__init__(config)
         self.joint_range = jnp.array(
             [
-                [-0.25, 0.25],
-                [-1.0, 1.4],
-                [-2.7, -1.0],
-                [-0.25, 0.25],
-                [-1.0, 1.4],
-                [-2.7, -1.0],
-                [-0.25, 0.25],
-                [0.0, 1.8],
-                [-2.7, -1.0],
-                [-0.25, 0.25],
-                [0.0, 1.8],
-                [-2.7, -1.0],
+                [-0.25, 0.25], [-1.0, 1.4],[-2.7, -1.0],
+                [-0.25, 0.25],[-1.0, 1.4],[-2.7, -1.0],
+                [-0.25, 0.25],[0.0, 1.8],[-2.7, -1.0],
+                [-0.25, 0.25],[0.0, 1.8],[-2.7, -1.0],
             ]
         )
 
@@ -700,10 +717,12 @@ class UnitreeGo2CrateEnv(UnitreeGo2Env):
         z_feet = pipeline_state.site_xpos[self._feet_site_id][:, 2]
         duty_ratio, cadence, amplitude = self._gait_params[self._gait]
         phases = self._gait_phase[self._gait]
+
         z_feet_tar = get_foot_step(
             duty_ratio, cadence, amplitude, phases, state.info["step"] * self.dt
         )
         reward_gaits = -jnp.sum(((z_feet_tar - z_feet) / 0.05) ** 2)
+
         # position reward
         pos_tar = (
             state.info["pos_tar"] + state.info["vel_tar"] * self.dt * state.info["step"]
@@ -738,6 +757,7 @@ class UnitreeGo2CrateEnv(UnitreeGo2Env):
         # pitch reward
         rpy = math.quat_to_euler(x.rot[self._torso_idx - 1])
         pitch_tar = -0.7854
+        # pitch_tar = -1.0472
         pitch = rpy[1]
         reward_pitch = -jnp.square(pitch - pitch_tar)
         reward_roll = -jnp.square(rpy[0])
@@ -755,13 +775,11 @@ class UnitreeGo2CrateEnv(UnitreeGo2Env):
             contact_dist = pipeline_state.contact.dist[contact_idx]
             contact_pt = pipeline_state.contact.pos[contact_idx]
             cond = (
-                (contact_pt[0] > 1.0)
-                & (contact_pt[0] < 1.6)
-                & (contact_pt[1] > -0.45)
-                & (contact_pt[1] < 0.45)
-                & (contact_pt[2] > 0.59)
-                & (contact_pt[2] < 0.61)
+                    (contact_pt[0] > 1.0) & (contact_pt[0] < 1.6)
+                    & (contact_pt[1] > -0.45) & (contact_pt[1] < 0.45)
+                    & (contact_pt[2] > 0.59) & (contact_pt[2] < 0.61)
             )
+
             reward_contact += jax.lax.cond(cond, reward_1, reward_0, 1.0)
             penalty_contact = penalty_contact.at[i].set(penalty_contact[i] & (~cond))
         penalty_contact = jnp.sum(penalty_contact)
@@ -775,10 +793,10 @@ class UnitreeGo2CrateEnv(UnitreeGo2Env):
             # + reward_pose * 0.0
             + reward_vel * 0.0
             + reward_height * 0.0
-            + reward_energy * 0.0000
+            + reward_energy * 0.001
             + reward_pitch * 0.0
             + reward_roll * 0.0
-            + reward_contact * 0.1
+            + reward_contact * 0.2
             - penalty_contact * 0.0
         )
         # jax.debug.print("{geom}", geom=pipeline_state.contact.geom)
@@ -802,7 +820,184 @@ class UnitreeGo2CrateEnv(UnitreeGo2Env):
         state.info["yaw_tar"] = 0.0
         return state
 
+class UnitreeGo2PushCrateEnvConfig(UnitreeGo2EnvConfig):
+
+    pass
+
+class UnitreeGo2PushCrateEnv(UnitreeGo2Env):
+    def __init__(self, config: UnitreeGo2PushCrateEnvConfig):
+        super().__init__(config)
+        # 删除箱子的关节
+        self.physical_joint_range = self.physical_joint_range[:-1]
+        self.joint_range = jnp.array(
+            [
+                [-0.25, 0.25], [-1.0, 1.4],[-2.7, -0.5],
+                [-0.25, 0.25],[-1.0, 1.4],[-2.7, -0.5],
+                [-0.25, 0.25],[0.0, 1.8],[-2.7, -0.5],
+                [-0.25, 0.25],[0.0, 1.8],[-2.7, -0.5],
+            ]
+        )
+
+
+    def make_system(self, config: UnitreeGo2PushCrateEnvConfig) -> System:
+        model_path = get_model_path("unitree_go2", "mjx_scene_push_crate.xml")
+        sys = mjcf.load(model_path)
+        sys = sys.tree_replace({"opt.timestep": config.timestep})
+
+        return sys
+
+    def reset(self, rng: jax.Array) -> State:
+        state = super().reset(rng)
+        state.info["pos_tar"] = jnp.array([3.0, 0.0, 0.8])
+        state.info["vel_tar"] = jnp.array([0.0, 0.0, 0.0])
+        state.info["ang_vel_tar"] = jnp.array([0.0, 0.0, 0.0])
+        state.info["yaw_tar"] = 0.0
+        return state
+
+    def step(
+        self, state: State, action: jax.Array
+    ) -> State:  # pytype: disable=signature-mismatch
+        rng, cmd_rng = jax.random.split(state.info["rng"], 2)
+
+        # physics step
+        joint_targets = self.act2joint(action)
+        # print(f"joint_targets shape: {joint_targets.shape}, action shape: {action.shape}")
+        if self._config.leg_control == "position":
+            ctrl = joint_targets
+        elif self._config.leg_control == "torque":
+            ctrl = self.act2tau(action, state.pipeline_state)
+
+        pipeline_state = self.pipeline_step(state.pipeline_state, ctrl)
+        x, xd = pipeline_state.x, pipeline_state.xd
+
+        # observation data
+        obs = self._get_obs(pipeline_state, state.info)
+
+        # done
+        done = 0.0
+        # up = jnp.array([0.0, 0.0, 1.0])
+        # joint_angles = pipeline_state.q[7:]
+        # joint_angles = joint_angles[: len(self.joint_range)]
+        # done = jnp.dot(math.rotate(up, x.rot[self._torso_idx - 1]), up) < 0
+        # done |= jnp.any(joint_angles < self.joint_range[:, 0])
+        # done |= jnp.any(joint_angles > self.joint_range[:, 1])
+        # done |= pipeline_state.x.pos[self._torso_idx - 1, 2] < 0.18
+        # done = done.astype(jnp.float32)
+
+        # reward
+        # gaits reward
+        z_feet = pipeline_state.site_xpos[self._feet_site_id][:, 2]
+
+        duty_ratio, cadence, amplitude = self._gait_params[self._gait]
+
+        phases = self._gait_phase[self._gait]
+
+        z_feet_tar = get_foot_step(
+            duty_ratio, cadence, amplitude, phases, state.info["step"] * self.dt
+        )
+
+        reward_gaits = -jnp.sum(((z_feet_tar - z_feet) / 0.05) ** 2)
+
+        # position reward
+        pos_tar = (
+            state.info["pos_tar"] + state.info["vel_tar"] * self.dt * state.info["step"]
+        )
+
+        pos = x.pos[self._torso_idx - 1]
+        # 计算机器人头部的位置
+        R = math.quat_to_3x3(x.rot[self._torso_idx - 1])
+        head_vec = jnp.array([0.285, 0.0, 0.0])
+        head_pos = pos + jnp.dot(R, head_vec)
+
+        reward_pos = -jnp.sum((head_pos - pos_tar) ** 2)
+
+        # stay upright reward
+        # vec-vector
+        vec_tar = jnp.array([0.0, 0.0, 1.0])
+
+        vec = math.rotate(vec_tar, x.rot[0])
+
+        reward_upright = -jnp.sum(jnp.square(vec - vec_tar))
+
+        # yaw orientation reward
+        yaw_tar = state.info["yaw_tar"]
+        yaw = math.quat_to_euler(x.rot[self._torso_idx - 1])[2]
+        reward_yaw = -jnp.square(yaw - yaw_tar)
+
+        # stay to norminal pose reward
+        # reward_pose = -jnp.sum(jnp.square(joint_targets - self._default_pose))
+        # velocity reward
+        reward_vel = -jnp.sum(
+            (xd.vel[self._torso_idx - 1] - state.info["vel_tar"]) ** 2
+        )
+        # height reward
+        reward_height = -jnp.sum(
+            (x.pos[self._torso_idx - 1, 2] - state.info["pos_tar"][2]) ** 2
+        )
+        # energy reward
+
+        #print(f"pipeline_state.qvel.shape: {pipeline_state.qvel.shape}")
+
+        reward_energy = -jnp.sum(
+            jnp.maximum(ctrl * pipeline_state.qvel[6:6+len(self.joint_range)] / 160.0, 0.0) ** 2
+        )
+        # pitch reward
+        rpy = math.quat_to_euler(x.rot[self._torso_idx - 1])
+        # pitch_tar = -0.7854
+        # pitch_tar = -1.0472
+        pitch_tar = -1.2
+        pitch = rpy[1]
+        reward_pitch = -jnp.square(pitch - pitch_tar)
+        reward_roll = -jnp.square(rpy[0])
+
+        ## push reward
+        # front_leg_indices = [16, 17]
+        # contact_with_box = pipeline_state.contact.geom[front_leg_indices] == self.box_geom_id
+        # reward_push = jax.lax.cond(contact_with_box, lambda x: 1.5 * x, lambda x: 0.0, 1.0)
+
+
+        # reward front leg height
+        front_leg_indices = [16, 17]
+        front_legs_z = pipeline_state.site_xpos[self._feet_site_id[:2], 2]
+        target_z = 0.50
+        reward_front_leg_height = -jnp.sum((front_legs_z - target_z) ** 2)
+
+        # reward front leg extension
+        front_legs_x = pipeline_state.site_xpos[self._feet_site_id[:2], 0]
+        target_offset = 0.25
+        target_x = head_pos[0] + target_offset
+        reward_front_leg_extension = -jnp.sum((front_legs_x - target_x) ** 2)
+
+        # reward
+        reward = (
+            reward_gaits * 0.0
+            + reward_pos * 0.5
+            + reward_upright * 0.01
+            + reward_yaw * 0.3
+            # + reward_pose * 0.0
+            + reward_vel * 0.0
+            + reward_height * 0.0
+            + reward_energy * 0.001
+            + reward_pitch * 0.1
+            + reward_roll * 0.0
+            + reward_front_leg_height * 0.1
+            # + reward_front_leg_extension*0.1
+        )
+
+        # jax.debug.print("{geom}", geom=pipeline_state.contact.geom)
+
+        # state management
+        state.info["step"] += 1
+        state.info["rng"] = rng
+        state.info["z_feet"] = z_feet
+        state.info["z_feet_tar"] = z_feet_tar
+
+        state = state.replace(
+            pipeline_state=pipeline_state, obs=obs, reward=reward, done=done
+        )
+        return state
 
 brax_envs.register_environment("unitree_go2_walk", UnitreeGo2Env)
 brax_envs.register_environment("unitree_go2_seq_jump", UnitreeGo2SeqJumpEnv)
 brax_envs.register_environment("unitree_go2_crate_climb", UnitreeGo2CrateEnv)
+brax_envs.register_environment("unitree_go2_crate_push", UnitreeGo2PushCrateEnv)
